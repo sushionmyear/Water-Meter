@@ -150,8 +150,8 @@ void wifiEnsureConnected() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleepMode(WIFI_NONE_SLEEP); // improves stability for always-on nodes
   WiFi.mode(WIFI_STA);
-WiFi.setAutoReconnect(true);
-WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
@@ -164,11 +164,17 @@ WiFi.persistent(false);
 }
 
 void mqttPublishRetained(const String& topic, const String& payload) {
+  if (!mqtt.connected()) return;
   mqtt.publish(cstr(topic), cstr(payload), true);
 }
 
 void mqttPublishStatus(const char* status) {
+  if (!mqtt.connected()) return;
   mqtt.publish(cstr(String(BASE_TOPIC) + "/status"), status, true);
+}
+
+String discoveryTopic(const String& suffix) {
+  return String(HA_PREFIX) + "/sensor/" + String(DEVICE_ID) + "_" + suffix + "/config";
 }
 
 void publishDiscovery() {
@@ -189,12 +195,14 @@ void publishDiscovery() {
   doc.clear();
   doc["name"] = "Water Meter Magnetic Field";
   doc["state_topic"] = String(BASE_TOPIC) + "/mag_debug";
+  doc["payload_available"] = "online";
+  doc["payload_not_available"] = "offline";
   doc["entity_category"] = "diagnostic";
   doc["unique_id"] = String(DEVICE_ID) + "_mag";
   doc["availability_topic"] = String(BASE_TOPIC) + "/status";
   addDeviceBlock(doc);
   len = serializeJson(doc, payload, sizeof(payload));
-  mqtt.publish("homeassistant/sensor/water_meter_mag/config", (uint8_t*)payload, len, true);
+  mqtt.publish(cstr(discoveryTopic("mag")), (uint8_t*)payload, len, true);
 
   // ---- TOTAL GALLONS SENSOR ----
   doc.clear();
@@ -203,22 +211,26 @@ void publishDiscovery() {
   doc["unit_of_measurement"] = "gal";
   doc["device_class"] = "water";
   doc["state_class"] = "total_increasing";
+  doc["payload_available"] = "online";
+  doc["payload_not_available"] = "offline";
   doc["unique_id"] = String(DEVICE_ID) + "_total";
   doc["availability_topic"] = String(BASE_TOPIC) + "/status";
   addDeviceBlock(doc);
   len = serializeJson(doc, payload, sizeof(payload));
-  mqtt.publish("homeassistant/sensor/water_meter_total/config", (uint8_t*)payload, len, true);
+  mqtt.publish(cstr(discoveryTopic("total")), (uint8_t*)payload, len, true);
 
   // ---- FLOW RATE SENSOR ----
   doc.clear();
   doc["name"] = "Water Flow Rate";
   doc["state_topic"] = String(BASE_TOPIC) + "/flow_gpm";
   doc["unit_of_measurement"] = "gpm";
+  doc["payload_available"] = "online";
+  doc["payload_not_available"] = "offline";
   doc["unique_id"] = String(DEVICE_ID) + "_flow";
   doc["availability_topic"] = String(BASE_TOPIC) + "/status";
   addDeviceBlock(doc);
   len = serializeJson(doc, payload, sizeof(payload));
-  mqtt.publish("homeassistant/sensor/water_meter_flow/config", (uint8_t*)payload, len, true);
+  mqtt.publish(cstr(discoveryTopic("flow")), (uint8_t*)payload, len, true);
 
   // ---- RSSI SENSOR ----
   doc.clear();
@@ -226,12 +238,15 @@ void publishDiscovery() {
   doc["state_topic"] = String(BASE_TOPIC) + "/rssi";
   doc["unit_of_measurement"] = "dBm";
   doc["entity_category"] = "diagnostic";
+  doc["payload_available"] = "online";
+  doc["payload_not_available"] = "offline";
   doc["unique_id"] = String(DEVICE_ID) + "_rssi";
   doc["availability_topic"] = String(BASE_TOPIC) + "/status";
   addDeviceBlock(doc);
   len = serializeJson(doc, payload, sizeof(payload));
-  mqtt.publish("homeassistant/sensor/water_meter_rssi/config", (uint8_t*)payload, len, true);
-discoveryPublished = true;}
+  mqtt.publish(cstr(discoveryTopic("rssi")), (uint8_t*)payload, len, true);
+  discoveryPublished = true;
+}
 
 
 
