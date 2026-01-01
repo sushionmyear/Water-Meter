@@ -55,14 +55,14 @@
 #define MODEL_NAME    "ESP8266 + LIS3MDL"
 
 // Meter calibration
-#define GALLONS_PER_PULSE  0.02f
+#define GALLONS_PER_PULSE  0.0225f
 
 // Magnetic thresholds (tune these)
 #define MAG_HIGH  29.0f
 #define MAG_LOW    25.0f
 
 // Pulse lockout to prevent double-counts due to noise/vibration (ms)
-#define PULSE_LOCKOUT_MS  500UL
+#define PULSE_LOCKOUT_MS  250UL  // was 500; allows up to ~4 pulses/sec (~4.8 gpm at 0.02 gal/pulse)
 
 // Sensor poll interval (ms)
 #define SENSOR_POLL_MS     10UL
@@ -372,7 +372,7 @@ void publishState() {
   mqttPublishRetained(String(BASE_TOPIC) + "/total_gallons", String(totalGallons, 1));
 
   // Flow based on pulses over a window (stable at low flow)
-  const unsigned long WINDOW_MS = 15000UL;  // shorter window for quicker response
+  const unsigned long WINDOW_MS = 10000UL;  // 10s window for quicker response
   if (lastFlowCalcMs == 0) {
     lastFlowCalcMs = now;
     pulseCountAtLastFlowCalc = pulseCount;
@@ -385,8 +385,8 @@ void publishState() {
     float minutes = (float)elapsed / 60000.0f;
     float gpm = (minutes > 0.0f) ? (gallonsDelta / minutes) : 0.0f;
 
-    // Light smoothing so it doesn't jump
-    flowGpmSmoothed = 0.3f * flowGpmSmoothed + 0.7f * gpm;
+    // No smoothing for fastest response
+    flowGpmSmoothed = gpm;
 
     pulseCountAtLastFlowCalc = pulseCount;
     lastFlowCalcMs = now;
