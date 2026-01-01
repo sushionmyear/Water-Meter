@@ -122,6 +122,9 @@ static bool discoveryPublished = false;
 static bool leakActive = false;
 static bool leakStatePublished = false;
 static unsigned long leakStartMs = 0;
+static unsigned long lastFlowCalcMs = 0;
+static unsigned long pulseCountAtLastFlowCalc = 0;
+static float flowGpmSmoothed = 0.0f;
 
 // ---------- Helpers ----------
 static inline const char* cstr(const String& s) { return s.c_str(); }
@@ -366,13 +369,29 @@ void publishState() {
 
   mqttPublishRetained(String(BASE_TOPIC) + "/total_gallons", String(totalGallons, 1));
 
-  float gpm = 0.0f;
-  // flow calculation: if last pulse recent, compute gpm
-  if (lastPulseMs != 0 && (now - lastPulseMs) < 60000UL) {
-    gpm = 60000.0f / (float)(now - lastPulseMs);
+  // Flow based on pulses over a window (stable at low flow)
+  const unsigned long WINDOW_MS = 60000UL;  // 60s window for low-flow stability
+  if (lastFlowCalcMs == 0) {
+    lastFlowCalcMs = now;
+    pulseCountAtLastFlowCalc = pulseCount;
   }
-  mqttPublishRetained(String(BASE_TOPIC) + "/flow_gpm", gpm > 0 ? String(gpm, 2) : "0");
-  updateLeakStatus(gpm, now);
+
+  unsigned long elapsed = now - lastFlowCalcMs;
+  if (elapsed >= WINDOW_MS) {
+    unsigned long pulsesDelta = pulseCount - pulseCountAtLastFlowCalc;
+    float gallonsDelta = pulsesDelta * GALLONS_PER_PULSE;
+    float minutes = (float)elapsed / 60000.0f;
+    float gpm = (minutes > 0.0f) ? (gallonsDelta / minutes) : 0.0f;
+
+    // Light smoothing so it doesn't jump
+    flowGpmSmoothed = 0.7f * flowGpmSmoothed + 0.3f * gpm;
+
+    pulseCountAtLastFlowCalc = pulseCount;
+    lastFlowCalcMs = now;
+  }
+
+  mqttPublishRetained(String(BASE_TOPIC) + "/flow_gpm", String(flowGpmSmoothed, 3));
+  updateLeakStatus(flowGpmSmoothed, now);
 
   mqttPublishRetained(String(BASE_TOPIC) + "/rssi", String(WiFi.RSSI()));
 }
