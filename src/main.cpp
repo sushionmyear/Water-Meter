@@ -55,11 +55,11 @@
 #define MODEL_NAME    "ESP8266 + LIS3MDL"
 
 // Meter calibration
-#define GALLONS_PER_PULSE  1.0f
+#define GALLONS_PER_PULSE  0.1f
 
 // Magnetic thresholds (tune these)
-#define MAG_HIGH  120.0f
-#define MAG_LOW    90.0f
+#define MAG_HIGH  320.0f
+#define MAG_LOW    60.0f
 
 // Pulse lockout to prevent double-counts due to noise/vibration (ms)
 #define PULSE_LOCKOUT_MS  500UL
@@ -75,12 +75,17 @@
 
 // Sanity bounds for |Mag| to reject SPI glitches / NaNs
 #define MAG_MIN_VALID    1.0f
-#define MAG_MAX_VALID 1000.0f
+#define MAG_MAX_VALID 400.0f
 
 // Optional remote reset command topic (publish "RESET")
 #define ENABLE_REMOTE_RESET  1
 #define RESET_TOPIC          BASE_TOPIC "/cmd"
 #define RESET_PAYLOAD        "RESET"
+
+// Leak detection: minimum flow and time window before alerting
+#define LEAK_MIN_GPM           0.05f        // ignore tiny drips/noise
+#define LEAK_MIN_DURATION_MS   (10UL * 60UL * 1000UL)  // 10 minutes
+#define LEAK_TOPIC             BASE_TOPIC "/leak"
 
 // Troubleshooting to mqtt remotely
 #define MAG_DEBUG_PUBLISH_MS 3000  // every 3 seconds
@@ -114,6 +119,9 @@ static unsigned long lastPublishMs = 0;
 static unsigned long lastMqttAttemptMs = 0;
 
 static bool discoveryPublished = false;
+static bool leakActive = false;
+static bool leakStatePublished = false;
+static unsigned long leakStartMs = 0;
 
 // ---------- Helpers ----------
 static inline const char* cstr(const String& s) { return s.c_str(); }
@@ -176,8 +184,17 @@ void mqttPublishStatus(const char* status) {
   mqtt.publish(cstr(String(BASE_TOPIC) + "/status"), status, true);
 }
 
+void mqttPublishLeak(const char* state) {
+  if (!mqtt.connected()) return;
+  mqtt.publish(LEAK_TOPIC, state, true);
+}
+
 String discoveryTopic(const String& suffix) {
   return String(HA_PREFIX) + "/sensor/" + String(DEVICE_ID) + "_" + suffix + "/config";
+}
+
+String discoveryTopicBinary(const String& suffix) {
+  return String(HA_PREFIX) + "/binary_sensor/" + String(DEVICE_ID) + "_" + suffix + "/config";
 }
 
 void publishDiscovery() {
@@ -248,6 +265,22 @@ void publishDiscovery() {
   addDeviceBlock(doc);
   len = serializeJson(doc, payload, sizeof(payload));
   mqtt.publish(cstr(discoveryTopic("rssi")), (uint8_t*)payload, len, true);
+
+  // ---- LEAK BINARY SENSOR ----
+  doc.clear();
+  doc["name"] = "Water Leak (flow)";
+  doc["state_topic"] = LEAK_TOPIC;
+  doc["payload_on"] = "ON";
+  doc["payload_off"] = "OFF";
+  doc["device_class"] = "problem";
+  doc["entity_category"] = "diagnostic";
+  doc["payload_available"] = "online";
+  doc["payload_not_available"] = "offline";
+  doc["unique_id"] = String(DEVICE_ID) + "_leak";
+  doc["availability_topic"] = String(BASE_TOPIC) + "/status";
+  addDeviceBlock(doc);
+  len = serializeJson(doc, payload, sizeof(payload));
+  mqtt.publish(cstr(discoveryTopicBinary("leak")), (uint8_t*)payload, len, true);
   discoveryPublished = true;
 }
 
@@ -298,6 +331,8 @@ bool mqttEnsureConnected() {
   if (ok) {
     mqttPublishStatus("online");
     if (!discoveryPublished) publishDiscovery();
+    mqttPublishLeak(leakActive ? "ON" : "OFF");
+    leakStatePublished = true;
 
 #if ENABLE_REMOTE_RESET
     mqtt.subscribe(RESET_TOPIC);
@@ -307,18 +342,37 @@ bool mqttEnsureConnected() {
   return ok;
 }
 
+void updateLeakStatus(float gpm, unsigned long now) {
+  if (gpm >= LEAK_MIN_GPM) {
+    if (leakStartMs == 0) leakStartMs = now;
+    if (!leakActive && (now - leakStartMs >= LEAK_MIN_DURATION_MS)) {
+      leakActive = true;
+      mqttPublishLeak("ON");
+      leakStatePublished = true;
+    }
+  } else {
+    leakStartMs = 0;
+    if (leakActive || !leakStatePublished) {
+      leakActive = false;
+      mqttPublishLeak("OFF");
+      leakStatePublished = true;
+    }
+  }
+}
+
 void publishState() {
+  unsigned long now = millis();
   float totalGallons = (float)pulseCount * (float)GALLONS_PER_PULSE;
 
   mqttPublishRetained(String(BASE_TOPIC) + "/total_gallons", String(totalGallons, 1));
 
+  float gpm = 0.0f;
   // flow calculation: if last pulse recent, compute gpm
-  if (lastPulseMs != 0 && (millis() - lastPulseMs) < 60000UL) {
-    float gpm = 60000.0f / (float)(millis() - lastPulseMs);
-    mqttPublishRetained(String(BASE_TOPIC) + "/flow_gpm", String(gpm, 2));
-  } else {
-    mqttPublishRetained(String(BASE_TOPIC) + "/flow_gpm", "0");
+  if (lastPulseMs != 0 && (now - lastPulseMs) < 60000UL) {
+    gpm = 60000.0f / (float)(now - lastPulseMs);
   }
+  mqttPublishRetained(String(BASE_TOPIC) + "/flow_gpm", gpm > 0 ? String(gpm, 2) : "0");
+  updateLeakStatus(gpm, now);
 
   mqttPublishRetained(String(BASE_TOPIC) + "/rssi", String(WiFi.RSSI()));
 }
