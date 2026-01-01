@@ -58,17 +58,19 @@
 #define GALLONS_PER_PULSE  0.02f
 
 // Magnetic thresholds (tune these)
-#define MAG_HIGH  31.0f
-#define MAG_LOW    23.0f
+#define MAG_HIGH  29.0f
+#define MAG_LOW    25.0f
 
 // Pulse lockout to prevent double-counts due to noise/vibration (ms)
 #define PULSE_LOCKOUT_MS  500UL
 
 // Sensor poll interval (ms)
-#define SENSOR_POLL_MS     50UL
+#define SENSOR_POLL_MS     10UL
 
 // MQTT publish interval (ms)
 #define PUBLISH_MS      10000UL
+#define FAST_PUBLISH_MS  3000UL   // when flow is active
+#define FLOW_FAST_THRESHOLD 0.5f  // gpm threshold for faster HA updates
 
 // EEPROM save interval (ms) to reduce wear
 #define EEPROM_SAVE_MS  60000UL
@@ -520,8 +522,9 @@ if (millis() - lastMagDebugPub > MAG_DEBUG_PUBLISH_MS) {
     }
   }
 
-  // ---- Periodic publish ----
-  if (now - lastPublishMs >= PUBLISH_MS) {
+  // ---- Periodic publish (faster when flowing) ----
+  unsigned long publishInterval = (flowGpmSmoothed > FLOW_FAST_THRESHOLD) ? FAST_PUBLISH_MS : PUBLISH_MS;
+  if (now - lastPublishMs >= publishInterval) {
     lastPublishMs = now;
     publishState();
     eepromSaveIfDue(false);
