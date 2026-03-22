@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Water Meter Installer</title>
+  <meta name="description" content="One-click browser installer for the ESP32 water meter firmware.">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    :root {
+      --bg: #e8eef4;
+      --bg-2: #d8e4ee;
+      --panel: rgba(255, 255, 255, 0.82);
+      --panel-border: rgba(27, 47, 67, 0.12);
+      --text: #152433;
+      --muted: #5c6d7b;
+      --accent: #0d6cbf;
+      --accent-2: #0f9b8e;
+      --shadow: 0 24px 60px rgba(19, 33, 48, 0.16);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, #f7fbfe 0%, transparent 35%),
+        radial-gradient(circle at bottom right, rgba(15, 155, 142, 0.12) 0%, transparent 30%),
+        linear-gradient(135deg, var(--bg) 0%, var(--bg-2) 100%);
+      min-height: 100vh;
+    }
+
+    .shell {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+
+    .hero {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: 1.35fr 0.95fr;
+      align-items: center;
+      padding: 28px;
+      border-radius: 28px;
+      background: linear-gradient(135deg, rgba(12, 92, 171, 0.96), rgba(15, 155, 142, 0.95));
+      color: white;
+      box-shadow: var(--shadow);
+    }
+
+    .eyebrow {
+      display: inline-block;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      opacity: 0.9;
+      margin-bottom: 10px;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 4vw, 3.5rem);
+      line-height: 1.04;
+      margin: 0 0 12px;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 62ch;
+      font-size: 1.02rem;
+      line-height: 1.6;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .install-card {
+      padding: 18px;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      backdrop-filter: blur(8px);
+    }
+
+    .install-card h2 {
+      margin: 0 0 8px;
+      font-size: 1.05rem;
+    }
+
+    .install-card p {
+      margin: 0 0 14px;
+      color: rgba(255, 255, 255, 0.86);
+      line-height: 1.5;
+      font-size: 0.95rem;
+    }
+
+    esp-web-install-button {
+      --esp-tools-button-color: #ffffff;
+      --esp-tools-button-text-color: #0b5cab;
+      --esp-tools-button-border-radius: 14px;
+      display: block;
+      margin: 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 22px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 1.02rem;
+    }
+
+    .card p, .card li {
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .footer {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      text-align: center;
+    }
+
+    code {
+      background: rgba(17, 34, 51, 0.06);
+      padding: 0.12rem 0.34rem;
+      border-radius: 6px;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    @media (max-width: 880px) {
+      .hero, .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <div class="eyebrow">ESP32 Water Meter</div>
+        <h1>Install the firmware from your browser.</h1>
+        <p>
+          Use this page to flash the ESP32 water meter without PlatformIO, Arduino IDE, or a local toolchain.
+          After installation, the device exposes its own Web UI for configuration, calibration, and OTA updates.
+        </p>
+      </div>
+      <div class="install-card">
+        <h2>One-click installer</h2>
+        <p>
+          Click install, connect the ESP32 over USB, and select the port when your browser asks.
+          Chrome, Edge, and other Chromium-based browsers are supported.
+        </p>
+        <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>What gets flashed</h2>
+        <p>The installer publishes the ESP32 bootloader, partition table, app binary, and the runtime Web UI firmware.</p>
+      </article>
+      <article class="card">
+        <h2>After install</h2>
+        <p>Open the device on your LAN, use the Web UI to set Wi-Fi and MQTT, then save settings and reboot.</p>
+      </article>
+      <article class="card">
+        <h2>Need the sensor wired?</h2>
+        <p>
+          This firmware expects the LIS3MDL on <code>GPIO18</code>, <code>GPIO19</code>, <code>GPIO23</code>, and <code>GPIO5</code>.
+        </p>
+      </article>
+    </section>
+
+    <div class="footer">
+      GitHub Pages must be enabled for this repository, and the browser must use HTTPS for Web Serial access.
+    </div>
+  </main>
+</body>
+</html>

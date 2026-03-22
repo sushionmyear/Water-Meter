@@ -9,6 +9,7 @@ It includes:
 - browser-based OTA firmware updates
 - persistent settings stored on the device
 - flow-rate and leak-state reporting
+- a GitHub Pages installer page for one-click browser flashing
 
 ![Web UI preview](docs/webui-preview.svg)
 
@@ -51,6 +52,14 @@ From the Web UI you can:
 - reset the pulse counter
 - reboot the device
 - upload new firmware over the air
+
+## Browser Installer
+
+The repo includes a GitHub Pages installer page in [docs/index.html](docs/index.html) that uses ESP Web Tools.
+
+Once GitHub Pages is enabled for this repository, users can open the hosted page, click install, and flash the ESP32 from a browser over USB.
+
+The installer artifact files are defined in [docs/manifest.json](docs/manifest.json), and the Pages deployment workflow lives in [.github/workflows/pages.yml](.github/workflows/pages.yml).
 
 ## Hardware
 
@@ -136,6 +145,10 @@ After the first USB flash, future updates can be done from the browser.
 4. Wait for the device to reboot.
 
 OTA updates do not erase saved settings.
+
+## GitHub Pages
+
+This repo is set up to deploy the installer site from GitHub Actions. In GitHub repository settings, Pages should use the GitHub Actions source. The workflow builds the ESP32 firmware, copies the bootloader and app artifacts into the Pages site, and publishes the browser installer.
 
 ## Home Assistant
 
