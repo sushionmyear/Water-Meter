@@ -19,7 +19,7 @@ Browser install works best with a Chromium-based desktop browser such as Chrome,
 What the browser installer does:
 
 - flashes a factory image to a blank ESP32
-- gets the device booted without PlatformIO
+- starts a built-in setup network if Wi-Fi is not configured yet
 - lets the Web UI and built-in OTA handle future updates
 
 After the first install, normal updates can be done from the device Web UI using the OTA section.
@@ -87,19 +87,7 @@ ESP32 SPI wiring used by this project:
 
 ## Quick Start
 
-### 1. Set first-boot defaults
-
-For a brand-new board, edit the placeholder defaults in `src/WaterMeterApp.cpp` before flashing:
-
-- `DEFAULT_WIFI_SSID`
-- `DEFAULT_WIFI_PASS`
-- `DEFAULT_MQTT_HOST`
-- `DEFAULT_MQTT_USER`
-- `DEFAULT_MQTT_PASS`
-
-These are only starter values. After the device is on your network, you can change everything from the Web UI.
-
-### 2. Build
+### 1. Build
 
 ```powershell
 pio run -e esp32dev
@@ -107,7 +95,7 @@ pio run -e esp32dev
 
 If `pio` is not on your PATH, build from PlatformIO in VS Code or run the PlatformIO executable directly from your local installation.
 
-### 3. Flash over USB the first time
+### 2. Flash over USB the first time
 
 Build output:
 
@@ -120,17 +108,22 @@ Typical first flash:
 pio run -e esp32dev -t upload
 ```
 
-### 4. Open the device on your network
+### 3. Connect to the setup network or your LAN
 
-After boot, open the serial monitor at `115200` baud and look for the IP address.
+After boot, the controller does one of two things:
 
-Then visit:
+- if it already has working Wi-Fi credentials saved, it joins that network and prints its LAN IP on serial
+- if it does not have valid Wi-Fi credentials yet, it starts a setup network named `WaterMeter-Setup-XXXX`
+
+For a brand-new install, connect your phone or laptop to the setup network and open:
 
 ```text
-http://<device-ip>/
+http://192.168.4.1/
 ```
 
-### 5. Finish setup in the Web UI
+Some devices warn that the setup network has no internet access. That is expected.
+
+### 4. Finish setup in the Web UI
 
 Recommended first changes:
 
@@ -140,6 +133,8 @@ Recommended first changes:
 - choose your final `Device ID`
 - choose your final `Device Name`
 - set `Mag Debug Publish (ms)` to `0` for normal use
+
+When you save settings, the controller reboots. If the Wi-Fi settings are correct, the setup network turns off and the device becomes available on your normal LAN.
 
 ## OTA Firmware Updates
 
@@ -209,9 +204,9 @@ If `Enable MQTT RESET command` is turned on, publishing `RESET` to `<base_topic>
 
 ### Web UI does not load
 
-- Check the serial monitor for the IP address.
-- Confirm the ESP32 joined your Wi-Fi.
-- Verify you are opening `http://<device-ip>/` on the same network.
+- If the board is new or Wi-Fi settings are wrong, connect to `WaterMeter-Setup-XXXX` and open `http://192.168.4.1/`.
+- If the controller already joined your Wi-Fi, check the serial monitor for the LAN IP address.
+- Verify you are opening the page from the same network as the device.
 
 ### Sensor shows as missing
 

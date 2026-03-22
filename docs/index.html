@@ -235,7 +235,7 @@
         <span class="eyebrow">ESP32 Water Meter Firmware</span>
         <h1>Install in one click.</h1>
         <p class="lead">
-          Flash the factory image directly from your browser, then use the built-in Web UI and OTA updater for all normal changes after that.
+          Flash the factory image directly from your browser, then finish commissioning through the built-in setup network and Web UI. After that, normal changes can stay entirely OTA.
         </p>
         <div class="hero-actions">
           <a class="link-button" href="https://github.com/sushionmyear/Water-Meter">View Source on GitHub</a>
@@ -273,10 +273,10 @@
       <article class="panel card">
         <h3>After Flashing</h3>
         <ol class="steps">
-          <li>Open the serial monitor at <code>115200</code>.</li>
-          <li>Find the device IP address after Wi-Fi connects.</li>
-          <li>Open <code>http://&lt;device-ip&gt;/</code>.</li>
-          <li>Finish setup in the Web UI.</li>
+          <li>Wait for the ESP32 to boot and advertise <code>WaterMeter-Setup-XXXX</code> if Wi-Fi is not configured yet.</li>
+          <li>Connect to that setup network from your phone or laptop.</li>
+          <li>Open <code>http://192.168.4.1/</code>.</li>
+          <li>Save your Wi-Fi and MQTT settings in the Web UI.</li>
         </ol>
       </article>
 
@@ -292,7 +292,7 @@
     </section>
 
     <p class="footer-note">
-      If the install button is unavailable, use the README browser installer link from GitHub or flash the ESP32 once over USB with PlatformIO and use OTA after that.
+      The setup network has no internet access, so your phone or laptop may show a warning while you are configuring it. If the install button is unavailable, use the README browser installer link from GitHub or flash the ESP32 once over USB with PlatformIO and use OTA after that.
     </p>
   </main>
 </body>

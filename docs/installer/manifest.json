@@ -1,6 +1,6 @@
 {
   "name": "Water Meter Firmware",
-  "version": "2026.03.22",
+  "version": "2026.03.22.1",
   "builds": [
     {
       "chipFamily": "ESP32",

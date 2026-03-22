@@ -53,8 +53,12 @@ static const uint16_t STORAGE_VERSION = 1;
 static const size_t STORAGE_BYTES = 1024;
 static const size_t MQTT_BUFFER_BYTES = 768;
 static const uint32_t WIFI_RETRY_MS = 10000UL;
+static const uint32_t WIFI_SETUP_AP_DELAY_MS = 30000UL;
 static const uint32_t MQTT_RETRY_MS = 10000UL;
 static const uint32_t RESTART_DELAY_MS = 1500UL;
+static const IPAddress SETUP_AP_IP(192, 168, 4, 1);
+static const IPAddress SETUP_AP_GATEWAY(192, 168, 4, 1);
+static const IPAddress SETUP_AP_SUBNET(255, 255, 255, 0);
 
 struct AppSettings {
   char wifiSsid[33];
@@ -109,6 +113,7 @@ static unsigned long lastPersistenceSaveMs = 0;
 static unsigned long lastSensorPollMs = 0;
 static unsigned long lastPublishMs = 0;
 static unsigned long lastWifiAttemptMs = 0;
+static unsigned long wifiConnectWindowStartMs = 0;
 static unsigned long lastMqttAttemptMs = 0;
 static unsigned long lastFlowCalcMs = 0;
 static unsigned long pulseCountAtLastFlowCalc = 0;
@@ -122,9 +127,11 @@ static bool leakStatePublished = false;
 static bool wifiWasConnected = false;
 static bool restartPending = false;
 static bool sensorAvailable = false;
+static bool setupApActive = false;
 static bool otaUpdateSuccess = false;
 static bool otaUpdateStarted = false;
 static String otaUpdateError;
+static char setupApSsid[33] = "";
 
 static inline const char* cstr(const String& value) { return value.c_str(); }
 
@@ -329,8 +336,19 @@ static void loadState() {
   }
 }
 
+static bool wifiCredentialsConfigured() {
+  return settings.wifiSsid[0] != '\0' && strcmp(settings.wifiSsid, DEFAULT_WIFI_SSID) != 0;
+}
+
+static void populateSetupApSsid() {
+  if (setupApSsid[0] != '\0') return;
+
+  unsigned long suffix = (unsigned long)(ESP.getEfuseMac() & 0xFFFFFFULL);
+  snprintf(setupApSsid, sizeof(setupApSsid), "WaterMeter-Setup-%06lX", suffix);
+}
+
 static void applyWifiClientSettings() {
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(setupApActive ? WIFI_AP_STA : WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setHostname(settings.deviceId);
 
@@ -338,10 +356,52 @@ static void applyWifiClientSettings() {
   WiFi.persistent(false);
 }
 
+static void startSetupAp() {
+  if (setupApActive) return;
+
+  populateSetupApSsid();
+  setupApActive = true;
+  applyWifiClientSettings();
+  WiFi.softAPConfig(SETUP_AP_IP, SETUP_AP_GATEWAY, SETUP_AP_SUBNET);
+
+  if (!WiFi.softAP(setupApSsid)) {
+    setupApActive = false;
+    applyWifiClientSettings();
+    Serial.println("Failed to start setup AP");
+    return;
+  }
+
+  Serial.printf("Setup AP ready. SSID=%s IP=%s\n", setupApSsid, WiFi.softAPIP().toString().c_str());
+}
+
+static void stopSetupAp() {
+  if (!setupApActive) return;
+
+  WiFi.softAPdisconnect(true);
+  setupApActive = false;
+  applyWifiClientSettings();
+  Serial.println("Setup AP stopped");
+}
+
 static bool wifiEnsureConnected() {
-  if (WiFi.status() == WL_CONNECTED) return true;
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiConnectWindowStartMs = 0;
+    if (setupApActive) stopSetupAp();
+    return true;
+  }
 
   unsigned long now = millis();
+  if (!wifiCredentialsConfigured()) {
+    wifiConnectWindowStartMs = 0;
+    startSetupAp();
+    return false;
+  }
+
+  if (wifiConnectWindowStartMs == 0) wifiConnectWindowStartMs = now;
+  if (!setupApActive && (now - wifiConnectWindowStartMs) >= WIFI_SETUP_AP_DELAY_MS) {
+    startSetupAp();
+  }
+
   if ((now - lastWifiAttemptMs) < WIFI_RETRY_MS) return false;
 
   applyWifiClientSettings();
@@ -676,12 +736,38 @@ static String buildStatusBody() {
   body += htmlEscape(settings.modelName);
   body += F(". Saving settings writes flash and reboots the device.</p>");
 
+  if (setupApActive) {
+    body += F("<div class='card' style='margin-bottom:18px;background:#edf7ed;border-color:#bfdcc0;'><strong>Setup mode is active.</strong> Connect to <strong>");
+    body += htmlEscape(setupApSsid);
+    body += F("</strong>, then open <a href='http://192.168.4.1/'>http://192.168.4.1/</a>. The setup network turns off automatically after the controller joins your normal WiFi.</div>");
+  } else if (!wifiCredentialsConfigured()) {
+    body += F("<div class='card' style='margin-bottom:18px;background:#fff7e8;border-color:#ead8aa;'><strong>WiFi still needs configuration.</strong> The controller will keep its setup network available until a real WiFi SSID is saved.</div>");
+  }
+
   body += F("<div class='meta'>");
   body += F("<div class='card'><div class='key'>Platform</div><div class='value'>");
   body += htmlEscape(PLATFORM_NAME);
   body += F("</div></div>");
-  body += F("<div class='card'><div class='key'>IP Address</div><div class='value'>");
+  body += F("<div class='card'><div class='key'>WiFi</div><div class='value'>");
+  if (WiFi.status() == WL_CONNECTED) {
+    body += F("Connected");
+  } else if (setupApActive) {
+    body += F("Setup AP Active");
+  } else {
+    body += F("Connecting");
+  }
+  body += F("</div></div>");
+  body += F("<div class='card'><div class='key'>Station IP</div><div class='value'>");
   body += (WiFi.status() == WL_CONNECTED) ? htmlEscape(WiFi.localIP().toString()) : String("Disconnected");
+  body += F("</div></div>");
+  body += F("<div class='card'><div class='key'>Setup Network</div><div class='value'>");
+  if (setupApActive) {
+    body += htmlEscape(setupApSsid);
+    body += F("<br>");
+    body += htmlEscape(WiFi.softAPIP().toString());
+  } else {
+    body += F("Off");
+  }
   body += F("</div></div>");
   body += F("<div class='card'><div class='key'>MQTT</div><div class='value'>");
   body += mqtt.connected() ? String("Connected") : String("Disconnected");
@@ -702,8 +788,8 @@ static String buildStatusBody() {
   body += F("<form method='post' action='/save'>");
 
   body += F("<h2>Network</h2>");
-  appendInputField(body, "WiFi SSID", "wifi_ssid", settings.wifiSsid, "text", nullptr, "The wireless network this controller should join.");
-  appendInputField(body, "WiFi Password", "wifi_pass", settings.wifiPass, "password", nullptr, "Password for the WiFi network above.");
+  appendInputField(body, "WiFi SSID", "wifi_ssid", settings.wifiSsid, "text", nullptr, "The wireless network this controller should join. On a brand-new install, save your real SSID here from the setup network.");
+  appendInputField(body, "WiFi Password", "wifi_pass", settings.wifiPass, "password", nullptr, "Password for the WiFi network above. After save and reboot, the setup network turns off once this connection succeeds.");
 
   body += F("<h2>MQTT</h2>");
   appendInputField(body, "MQTT Host", "mqtt_host", settings.mqttHost, "text", nullptr, "IP address or hostname of your MQTT broker.");
@@ -816,7 +902,7 @@ static void handleSave() {
   saveState(true);
 
   String body;
-  body += F("<h1>Settings Saved</h1><p>The device will reboot in a moment so the new WiFi, MQTT, and calibration settings are applied.</p>");
+  body += F("<h1>Settings Saved</h1><p>The device will reboot in a moment so the new WiFi, MQTT, and calibration settings are applied. If it cannot join the saved WiFi, reconnect to the setup network and try again.</p>");
   body += F("<p><a href='/'>Return to the WebUI</a></p>");
   webServer.send(200, "text/html", renderPage("Settings Saved", body));
 
@@ -922,10 +1008,14 @@ static void handleFirmwareUpdatePost() {
 }
 
 static void handleStatusApi() {
-  StaticJsonDocument<384> doc;
+  StaticJsonDocument<640> doc;
   doc["device"] = settings.deviceName;
   doc["platform"] = PLATFORM_NAME;
   doc["ip"] = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : "disconnected";
+  doc["wifi_configured"] = wifiCredentialsConfigured();
+  doc["setup_ap_active"] = setupApActive;
+  doc["setup_ap_ssid"] = setupApActive ? setupApSsid : "";
+  doc["setup_ap_ip"] = setupApActive ? WiFi.softAPIP().toString() : "";
   doc["mqtt"] = mqtt.connected();
   doc["sensor_available"] = sensorAvailable;
   doc["pulse_count"] = pulseCount;
@@ -938,11 +1028,22 @@ static void handleStatusApi() {
 }
 
 static void handleNotFound() {
+  if (setupApActive && webServer.method() == HTTP_GET) {
+    webServer.sendHeader("Location", "/", true);
+    webServer.send(302, "text/plain", "");
+    return;
+  }
+
   webServer.send(404, "text/plain", "Not found");
 }
 
 static void setupWebServer() {
   webServer.on("/", HTTP_GET, handleRoot);
+  webServer.on("/generate_204", HTTP_GET, handleRoot);
+  webServer.on("/hotspot-detect.html", HTTP_GET, handleRoot);
+  webServer.on("/connecttest.txt", HTTP_GET, handleRoot);
+  webServer.on("/ncsi.txt", HTTP_GET, handleRoot);
+  webServer.on("/fwlink", HTTP_GET, handleRoot);
   webServer.on("/save", HTTP_POST, handleSave);
   webServer.on("/update", HTTP_POST, handleFirmwareUpdatePost, handleFirmwareUpdateUpload);
   webServer.on("/reset-counter", HTTP_POST, handleResetCounter);
@@ -980,6 +1081,9 @@ void waterMeterSetup() {
 
   Serial.print("WebUI ready on hostname ");
   Serial.println(settings.deviceId);
+  if (!wifiCredentialsConfigured()) {
+    Serial.printf("No real WiFi SSID saved yet. Connect to setup network %s at http://192.168.4.1/\n", setupApSsid);
+  }
 }
 
 void waterMeterLoop() {
