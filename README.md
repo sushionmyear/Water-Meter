@@ -61,26 +61,7 @@ If `pio` is not on your PATH, build from PlatformIO in VS Code or run the Platfo
 3. Upload `.pio/build/esp32dev/firmware.bin`.
 4. Wait for the device to reboot.
 
-## Publish To GitHub Safely
-
-This local repo contains old personal Wi-Fi and MQTT values in its Git history, so do not push the existing `.git` history to a public GitHub repo.
-
-Safest method:
-
-1. Create a new empty folder somewhere else.
-2. Copy this project into it, but do not copy the `.git` folder.
-3. In the new folder, run:
-
-```powershell
-git init
-git add .
-git commit -m "Initial public release"
-git branch -M main
-git remote add origin https://github.com/<your-user>/<your-repo>.git
-git push -u origin main
-```
-
 ## Notes
 
-- `.pio` is ignored by Git and should not be committed.
-- If the old Wi-Fi or MQTT credentials are still in use, rotate them before making a public repo.
+- Default network and MQTT values in the source are placeholders for first-time setup.
+- OTA firmware updates do not erase the saved settings stored on the device.
