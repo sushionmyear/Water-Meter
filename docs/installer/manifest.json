@@ -1,0 +1,15 @@
+{
+  "name": "Water Meter Firmware",
+  "version": "2026.03.22",
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        {
+          "path": "water-meter-esp32-factory.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

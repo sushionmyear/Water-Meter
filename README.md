@@ -9,7 +9,20 @@ It includes:
 - browser-based OTA firmware updates
 - persistent settings stored on the device
 - flow-rate and leak-state reporting
-- a GitHub Pages installer page for one-click browser flashing
+
+## Install In Browser
+
+[Launch Web Installer](https://esphome.github.io/esp-web-tools/?manifest=https://raw.githubusercontent.com/sushionmyear/Water-Meter/main/docs/installer/manifest.json)
+
+Browser install works best with a Chromium-based desktop browser such as Chrome, Edge, or Brave and a USB data cable.
+
+What the browser installer does:
+
+- flashes a factory image to a blank ESP32
+- gets the device booted without PlatformIO
+- lets the Web UI and built-in OTA handle future updates
+
+After the first install, normal updates can be done from the device Web UI using the OTA section.
 
 ![Web UI preview](docs/webui-preview.svg)
 
@@ -52,14 +65,6 @@ From the Web UI you can:
 - reset the pulse counter
 - reboot the device
 - upload new firmware over the air
-
-## Browser Installer
-
-The repo includes a GitHub Pages installer page in [docs/index.html](docs/index.html) that uses ESP Web Tools.
-
-Once GitHub Pages is enabled for this repository, users can open the hosted page, click install, and flash the ESP32 from a browser over USB.
-
-The installer artifact files are defined in [docs/manifest.json](docs/manifest.json), and the Pages deployment workflow lives in [.github/workflows/pages.yml](.github/workflows/pages.yml).
 
 ## Hardware
 
@@ -106,7 +111,8 @@ If `pio` is not on your PATH, build from PlatformIO in VS Code or run the Platfo
 
 Build output:
 
-- firmware image: `.pio/build/esp32dev/firmware.bin`
+- browser installer factory image: `docs/installer/water-meter-esp32-factory.bin`
+- OTA image: `.pio/build/esp32dev/firmware.bin`
 
 Typical first flash:
 
@@ -137,7 +143,7 @@ Recommended first changes:
 
 ## OTA Firmware Updates
 
-After the first USB flash, future updates can be done from the browser.
+After the first USB flash or browser install, future updates can be done from the browser.
 
 1. Build the firmware.
 2. Open the device IP in your browser.
@@ -145,10 +151,6 @@ After the first USB flash, future updates can be done from the browser.
 4. Wait for the device to reboot.
 
 OTA updates do not erase saved settings.
-
-## GitHub Pages
-
-This repo is set up to deploy the installer site from GitHub Actions. In GitHub repository settings, Pages should use the GitHub Actions source. The workflow builds the ESP32 firmware, copies the bootloader and app artifacts into the Pages site, and publishes the browser installer.
 
 ## Home Assistant
 
@@ -198,6 +200,13 @@ If `Enable MQTT RESET command` is turned on, publishing `RESET` to `<base_topic>
 
 ## Troubleshooting
 
+### Browser installer does not connect
+
+- Use a desktop Chromium-based browser.
+- Use a real USB data cable, not a charge-only cable.
+- Close Arduino Serial Monitor or any app already using the COM port.
+- Press reset on the ESP32 and try again.
+
 ### Web UI does not load
 
 - Check the serial monitor for the IP address.
@@ -234,6 +243,18 @@ If `Enable MQTT RESET command` is turned on, publishing `RESET` to `<base_topic>
 - `src/main.cpp` - Arduino entrypoint
 - `src/WaterMeterApp.cpp` - firmware logic, Web UI, MQTT, OTA, persistence
 - `include/WaterMeterApp.h` - app entrypoint declarations
+- `docs/installer/` - browser installer manifest and firmware image
+- `scripts/update-web-installer.ps1` - rebuilds the browser installer artifacts
+
+## Maintainer Notes
+
+To refresh the browser installer artifacts after firmware changes:
+
+```powershell
+.\scripts\update-web-installer.ps1
+```
+
+That script rebuilds the ESP32 firmware, creates a merged factory image for ESP Web Tools, and refreshes the OTA binary copy inside `docs/installer/`.
 
 ## Notes
 
