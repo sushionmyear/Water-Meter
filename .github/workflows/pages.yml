@@ -40,13 +40,12 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
+          mkdir -p _site/installer
           cp docs/index.html _site/index.html
-          cp docs/manifest.json _site/manifest.json
           cp docs/webui-preview.svg _site/webui-preview.svg
-          cp .pio/build/esp32dev/bootloader.bin _site/bootloader.bin
-          cp .pio/build/esp32dev/partitions.bin _site/partitions.bin
-          cp "${{ steps.paths.outputs.boot_app0 }}" _site/boot_app0.bin
-          cp .pio/build/esp32dev/firmware.bin _site/firmware.bin
+          cp docs/installer/manifest.json _site/installer/manifest.json
+          cp docs/installer/water-meter-esp32-factory.bin _site/installer/water-meter-esp32-factory.bin
+          cp docs/installer/water-meter-esp32-ota.bin _site/installer/water-meter-esp32-ota.bin
           touch _site/.nojekyll
 
       - name: Upload Pages artifact
