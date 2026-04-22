@@ -177,7 +177,7 @@ These are the settings most users are likely to adjust:
 - `Pulse Lockout (ms)`: minimum spacing between pulses; lower values allow higher max flow
 - `Sensor Poll (ms)`: how often the LIS3MDL is sampled
 - `Flash Save Interval (ms)`: how often pulse count is saved to flash
-- `Magnetic Diagnostics`: shows live X/Y/Z and magnitude readings in the Web UI for 20 minutes, then automatically turns off
+- `Magnetic Diagnostics`: shows live X/Y/Z and magnitude readings plus a browser log for 20 minutes, then automatically turns off
 - `Leak Minimum Flow (gpm)`: minimum sustained flow before leak timing starts
 - `Leak Minimum Duration (ms)`: how long flow must persist before leak state turns on
 

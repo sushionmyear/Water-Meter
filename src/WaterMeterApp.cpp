@@ -740,17 +740,23 @@ static String renderPage(const String& title, const String& body) {
   page += F("small{color:#60707f;margin-top:-6px;}button{font:inherit;padding:11px 14px;border:0;border-radius:10px;background:#0f6cbd;color:#fff;cursor:pointer;}");
   page += F(".actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:20px;}.actions form{display:block;}");
   page += F(".secondary{background:#415a77;}.danger{background:#b42318;}a{color:#0f6cbd;text-decoration:none;}");
+  page += F("pre.log{background:#101923;color:#d8f3dc;border-radius:12px;padding:14px;max-height:320px;overflow:auto;white-space:pre-wrap;font:13px/1.45 Consolas,monospace;}");
   page += F("</style></head><body><div class='shell'>");
   page += body;
   page += F("</div><script>");
   page += F("function setText(id,v){var e=document.getElementById(id);if(e)e.textContent=v;}");
   page += F("function fixed(v,n){return typeof v==='number'&&isFinite(v)?v.toFixed(n):'n/a';}");
+  page += F("var magLastMs=0,magLines=[];function addMagLine(s){if(!s.mag_diagnostics_active||!s.mag_reading_ms||s.mag_reading_ms===magLastMs)return;magLastMs=s.mag_reading_ms;");
+  page += F("var t=new Date().toLocaleTimeString();var line=t+' | mag='+fixed(s.mag_magnitude,2)+' | x='+fixed(s.mag_x,2)+' y='+fixed(s.mag_y,2)+' z='+fixed(s.mag_z,2)+' | valid='+(s.mag_valid?'yes':'no');");
+  page += F("magLines.unshift(line);if(magLines.length>120)magLines.length=120;var e=document.getElementById('mag-log');if(e)e.textContent=magLines.join('\\n');}");
+  page += F("function clearMagLog(){magLines=[];magLastMs=0;setText('mag-log','Diagnostics log is empty.');}");
   page += F("async function refreshStatus(){try{var r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)return;var s=await r.json();");
   page += F("setText('diag-state',s.mag_diagnostics_active?'On':'Off');");
   page += F("setText('diag-remaining',s.mag_diagnostics_active?Math.ceil((s.mag_diagnostics_remaining_ms||0)/60000)+' min':'0 min');");
   page += F("if(!s.mag_diagnostics_active){setText('mag-magnitude','n/a');setText('mag-x','n/a');setText('mag-y','n/a');setText('mag-z','n/a');setText('mag-valid','Off');setText('mag-age','n/a');return;}");
   page += F("setText('mag-magnitude',fixed(s.mag_magnitude,2));setText('mag-x',fixed(s.mag_x,2));setText('mag-y',fixed(s.mag_y,2));setText('mag-z',fixed(s.mag_z,2));");
   page += F("setText('mag-valid',s.mag_valid?'Yes':'No');setText('mag-age',typeof s.mag_age_ms==='number'?Math.round(s.mag_age_ms/1000)+' sec':'n/a');");
+  page += F("addMagLine(s);");
   page += F("}catch(e){}}setInterval(refreshStatus,2000);refreshStatus();");
   page += F("</script></body></html>");
   return page;
@@ -843,7 +849,9 @@ static String buildStatusBody() {
   body += F("<div class='actions'>");
   body += F("<form method='post' action='/diagnostics/start'><button type='submit'>Show Magnetic Readings For 20 Minutes</button></form>");
   body += F("<form method='post' action='/diagnostics/stop'><button class='secondary' type='submit'>Turn Off Magnetic Readings</button></form>");
+  body += F("<button class='secondary' type='button' onclick='clearMagLog()'>Clear Browser Log</button>");
   body += F("</div>");
+  body += F("<pre class='log' id='mag-log'>Diagnostics log is empty.</pre>");
 
   body += F("<form method='post' action='/save'>");
 
@@ -1108,6 +1116,7 @@ static void handleStatusApi() {
   doc["mag_z"] = isfinite(lastMagZ) ? lastMagZ : 0.0f;
   doc["mag_magnitude"] = isfinite(lastMagMagnitude) ? lastMagMagnitude : 0.0f;
   doc["mag_valid"] = magValid;
+  doc["mag_reading_ms"] = lastMagReadingMs;
   doc["mag_age_ms"] = lastMagReadingMs > 0 ? (uint32_t)(millis() - lastMagReadingMs) : 0UL;
 
   String payload;
