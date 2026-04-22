@@ -174,6 +174,9 @@ These are the settings most users are likely to adjust:
 - `Gallons Per Pulse`: calibration value for your meter
 - `Mag High Threshold`: level that counts a pulse
 - `Mag Low Threshold`: level that re-arms the next pulse
+- `Enable Adaptive Thresholds`: slowly tracks idle magnetic drift and shifts the effective pulse thresholds automatically
+- `Adaptive High Delta`: how far above the learned idle baseline the reading must rise to count a pulse
+- `Adaptive Low Delta`: how close to the learned idle baseline the reading must fall before the next pulse can arm
 - `Pulse Lockout (ms)`: minimum spacing between pulses; lower values allow higher max flow
 - `Sensor Poll (ms)`: how often the LIS3MDL is sampled
 - `Flash Save Interval (ms)`: how often pulse count is saved to flash
@@ -225,6 +228,7 @@ If `Enable MQTT RESET command` is turned on, publishing `RESET` to `<base_topic>
 ### False counts or noisy readings
 
 - Turn on `Magnetic Diagnostics` in the Web UI and watch the live magnitude while the meter is idle and while water is flowing.
+- If the idle magnetic value drifts over hours or days, enable `Adaptive Thresholds` and use the effective high/low values shown in diagnostics.
 - Raise `Mag High Threshold`.
 - Lower `Mag Low Threshold` only if the sensor is failing to re-arm.
 - Set `Mag Debug Publish (ms)` to a small value temporarily so you can inspect the live magnetic value over MQTT.

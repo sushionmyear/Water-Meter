@@ -47,9 +47,12 @@ static const uint8_t DEFAULT_ENABLE_REMOTE_RESET = 1;
 static const float DEFAULT_LEAK_MIN_GPM = 0.05f;
 static const uint32_t DEFAULT_LEAK_MIN_DURATION_MS = 10UL * 60UL * 1000UL;
 static const uint32_t DEFAULT_MAG_DEBUG_PUBLISH_MS = 3000UL;
+static const uint8_t DEFAULT_ADAPTIVE_THRESHOLDS = 1;
+static const float DEFAULT_ADAPTIVE_HIGH_DELTA = DEFAULT_MAG_HIGH - DEFAULT_MAG_LOW;
+static const float DEFAULT_ADAPTIVE_LOW_DELTA = 0.75f;
 
 static const uint32_t STORAGE_MAGIC = 0x574D5354;
-static const uint16_t STORAGE_VERSION = 1;
+static const uint16_t STORAGE_VERSION = 2;
 static const size_t STORAGE_BYTES = 1024;
 static const size_t MQTT_BUFFER_BYTES = 768;
 static const uint32_t WIFI_RETRY_MS = 10000UL;
@@ -88,6 +91,38 @@ struct AppSettings {
   float leakMinGpm;
   uint32_t leakMinDurationMs;
   uint32_t magDebugPublishMs;
+  uint8_t adaptiveThresholds;
+  float adaptiveHighDelta;
+  float adaptiveLowDelta;
+};
+
+struct AppSettingsV1 {
+  char wifiSsid[33];
+  char wifiPass[65];
+  char mqttHost[65];
+  uint16_t mqttPort;
+  char mqttUser[33];
+  char mqttPass[33];
+  char baseTopic[65];
+  char haPrefix[33];
+  char deviceId[33];
+  char deviceName[33];
+  char modelName[33];
+  float gallonsPerPulse;
+  float magHigh;
+  float magLow;
+  uint32_t pulseLockoutMs;
+  uint32_t sensorPollMs;
+  uint32_t publishMs;
+  uint32_t fastPublishMs;
+  float flowFastThreshold;
+  uint32_t persistSaveMs;
+  float magMinValid;
+  float magMaxValid;
+  uint8_t enableRemoteReset;
+  float leakMinGpm;
+  uint32_t leakMinDurationMs;
+  uint32_t magDebugPublishMs;
 };
 
 struct PersistedState {
@@ -96,6 +131,14 @@ struct PersistedState {
   uint16_t length;
   uint32_t pulseCount;
   AppSettings settings;
+};
+
+struct PersistedStateV1 {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t length;
+  uint32_t pulseCount;
+  AppSettingsV1 settings;
 };
 
 static_assert(sizeof(PersistedState) <= STORAGE_BYTES, "Persisted state exceeds storage allocation");
@@ -128,6 +171,9 @@ static float lastMagX = NAN;
 static float lastMagY = NAN;
 static float lastMagZ = NAN;
 static float lastMagMagnitude = NAN;
+static float adaptiveBaseline = NAN;
+static float effectiveMagHigh = NAN;
+static float effectiveMagLow = NAN;
 static bool discoveryPublished = false;
 static bool leakActive = false;
 static bool leakStatePublished = false;
@@ -214,6 +260,18 @@ static void loadDefaultSettings(AppSettings& target) {
   target.leakMinGpm = DEFAULT_LEAK_MIN_GPM;
   target.leakMinDurationMs = DEFAULT_LEAK_MIN_DURATION_MS;
   target.magDebugPublishMs = DEFAULT_MAG_DEBUG_PUBLISH_MS;
+  target.adaptiveThresholds = DEFAULT_ADAPTIVE_THRESHOLDS;
+  target.adaptiveHighDelta = DEFAULT_ADAPTIVE_HIGH_DELTA;
+  target.adaptiveLowDelta = DEFAULT_ADAPTIVE_LOW_DELTA;
+}
+
+static void applyAdaptiveDefaults(AppSettings& target) {
+  float spread = target.magHigh - target.magLow;
+  if (!isfinite(spread) || spread < 1.0f) spread = DEFAULT_ADAPTIVE_HIGH_DELTA;
+
+  target.adaptiveThresholds = DEFAULT_ADAPTIVE_THRESHOLDS;
+  target.adaptiveHighDelta = spread;
+  target.adaptiveLowDelta = clampValue<float>(spread * 0.20f, 0.2f, spread - 0.2f);
 }
 
 static void sanitizeSettings(AppSettings& target) {
@@ -241,6 +299,8 @@ static void sanitizeSettings(AppSettings& target) {
   if (!isfinite(target.magMinValid) || target.magMinValid <= 0.0f) target.magMinValid = DEFAULT_MAG_MIN_VALID;
   if (!isfinite(target.magMaxValid) || target.magMaxValid <= target.magMinValid) target.magMaxValid = DEFAULT_MAG_MAX_VALID;
   if (!isfinite(target.leakMinGpm) || target.leakMinGpm < 0.0f) target.leakMinGpm = DEFAULT_LEAK_MIN_GPM;
+  if (!isfinite(target.adaptiveHighDelta) || target.adaptiveHighDelta < 0.5f) target.adaptiveHighDelta = DEFAULT_ADAPTIVE_HIGH_DELTA;
+  if (!isfinite(target.adaptiveLowDelta) || target.adaptiveLowDelta < 0.0f) target.adaptiveLowDelta = DEFAULT_ADAPTIVE_LOW_DELTA;
 
   target.pulseLockoutMs = clampValue<uint32_t>(target.pulseLockoutMs, 20UL, 10000UL);
   target.sensorPollMs = clampValue<uint32_t>(target.sensorPollMs, 5UL, 500UL);
@@ -250,6 +310,9 @@ static void sanitizeSettings(AppSettings& target) {
   target.leakMinDurationMs = clampValue<uint32_t>(target.leakMinDurationMs, 1000UL, 24UL * 60UL * 60UL * 1000UL);
   target.magDebugPublishMs = clampValue<uint32_t>(target.magDebugPublishMs, 0UL, 3600000UL);
   target.enableRemoteReset = target.enableRemoteReset ? 1 : 0;
+  target.adaptiveThresholds = target.adaptiveThresholds ? 1 : 0;
+  target.adaptiveHighDelta = clampValue<float>(target.adaptiveHighDelta, 0.5f, 200.0f);
+  target.adaptiveLowDelta = clampValue<float>(target.adaptiveLowDelta, 0.0f, target.adaptiveHighDelta - 0.1f);
 
   if (target.magHigh <= target.magLow) {
     target.magHigh = target.magLow + 1.0f;
@@ -308,6 +371,52 @@ static uint32_t magDiagnosticsRemainingMs() {
   return magDiagnosticsActive() ? (uint32_t)(magDiagnosticsUntilMs - millis()) : 0UL;
 }
 
+static bool recentPulse(unsigned long now) {
+  if (lastPulseMs == 0) return false;
+  unsigned long quietMs = max(settings.pulseLockoutMs * 4UL, 2000UL);
+  return (now - lastPulseMs) < quietMs;
+}
+
+static void resetAdaptiveBaseline() {
+  adaptiveBaseline = NAN;
+  effectiveMagHigh = NAN;
+  effectiveMagLow = NAN;
+}
+
+static void updateEffectiveThresholds(float mag, unsigned long now) {
+  if (!settings.adaptiveThresholds || !isfinite(mag)) {
+    effectiveMagHigh = settings.magHigh;
+    effectiveMagLow = settings.magLow;
+    return;
+  }
+
+  if (!isfinite(adaptiveBaseline)) {
+    adaptiveBaseline = mag;
+  }
+
+  float proposedHigh = adaptiveBaseline + settings.adaptiveHighDelta;
+  bool quietSample = !triggered && !recentPulse(now) && mag < proposedHigh;
+  if (quietSample) {
+    const float baselineAlpha = 0.01f;
+    adaptiveBaseline += (mag - adaptiveBaseline) * baselineAlpha;
+  }
+
+  effectiveMagHigh = adaptiveBaseline + settings.adaptiveHighDelta;
+  effectiveMagLow = adaptiveBaseline + settings.adaptiveLowDelta;
+
+  if (effectiveMagLow >= effectiveMagHigh) {
+    effectiveMagLow = effectiveMagHigh - 0.1f;
+  }
+}
+
+static float activeMagHigh() {
+  return isfinite(effectiveMagHigh) ? effectiveMagHigh : settings.magHigh;
+}
+
+static float activeMagLow() {
+  return isfinite(effectiveMagLow) ? effectiveMagLow : settings.magLow;
+}
+
 static String firmwareUpdateErrorString() {
   return String("Update error code ") + String(Update.getError());
 }
@@ -336,6 +445,38 @@ static void saveState(bool force = false) {
   lastPersistenceSaveMs = now;
 }
 
+static void migrateSettingsV1(const AppSettingsV1& source, AppSettings& target) {
+  memset(&target, 0, sizeof(target));
+
+  copyText(target.wifiSsid, source.wifiSsid);
+  copyText(target.wifiPass, source.wifiPass);
+  copyText(target.mqttHost, source.mqttHost);
+  target.mqttPort = source.mqttPort;
+  copyText(target.mqttUser, source.mqttUser);
+  copyText(target.mqttPass, source.mqttPass);
+  copyText(target.baseTopic, source.baseTopic);
+  copyText(target.haPrefix, source.haPrefix);
+  copyText(target.deviceId, source.deviceId);
+  copyText(target.deviceName, source.deviceName);
+  copyText(target.modelName, source.modelName);
+  target.gallonsPerPulse = source.gallonsPerPulse;
+  target.magHigh = source.magHigh;
+  target.magLow = source.magLow;
+  target.pulseLockoutMs = source.pulseLockoutMs;
+  target.sensorPollMs = source.sensorPollMs;
+  target.publishMs = source.publishMs;
+  target.fastPublishMs = source.fastPublishMs;
+  target.flowFastThreshold = source.flowFastThreshold;
+  target.persistSaveMs = source.persistSaveMs;
+  target.magMinValid = source.magMinValid;
+  target.magMaxValid = source.magMaxValid;
+  target.enableRemoteReset = source.enableRemoteReset;
+  target.leakMinGpm = source.leakMinGpm;
+  target.leakMinDurationMs = source.leakMinDurationMs;
+  target.magDebugPublishMs = source.magDebugPublishMs;
+  applyAdaptiveDefaults(target);
+}
+
 static void loadState() {
   EEPROM.begin(STORAGE_BYTES);
 
@@ -348,6 +489,15 @@ static void loadState() {
     settings = persisted.settings;
     pulseCount = persisted.pulseCount;
     sanitizeSettings(settings);
+  } else if (persisted.magic == STORAGE_MAGIC &&
+             persisted.version == 1 &&
+             persisted.length == sizeof(PersistedStateV1)) {
+    PersistedStateV1 oldState = {};
+    EEPROM.get(0, oldState);
+    migrateSettingsV1(oldState.settings, settings);
+    pulseCount = oldState.pulseCount;
+    sanitizeSettings(settings);
+    saveState(true);
   } else {
     loadDefaultSettings(settings);
     sanitizeSettings(settings);
@@ -753,6 +903,7 @@ static String renderPage(const String& title, const String& body) {
   page += F("async function refreshStatus(){try{var r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)return;var s=await r.json();");
   page += F("setText('diag-state',s.mag_diagnostics_active?'On':'Off');");
   page += F("setText('diag-remaining',s.mag_diagnostics_active?Math.ceil((s.mag_diagnostics_remaining_ms||0)/60000)+' min':'0 min');");
+  page += F("setText('adaptive-state',s.adaptive_thresholds?'On':'Off');setText('adaptive-baseline',s.adaptive_thresholds?fixed(s.adaptive_baseline,2):'Off');setText('effective-high',fixed(s.effective_mag_high,2));setText('effective-low',fixed(s.effective_mag_low,2));");
   page += F("if(!s.mag_diagnostics_active){setText('mag-magnitude','n/a');setText('mag-x','n/a');setText('mag-y','n/a');setText('mag-z','n/a');setText('mag-valid','Off');setText('mag-age','n/a');return;}");
   page += F("setText('mag-magnitude',fixed(s.mag_magnitude,2));setText('mag-x',fixed(s.mag_x,2));setText('mag-y',fixed(s.mag_y,2));setText('mag-z',fixed(s.mag_z,2));");
   page += F("setText('mag-valid',s.mag_valid?'Yes':'No');setText('mag-age',typeof s.mag_age_ms==='number'?Math.round(s.mag_age_ms/1000)+' sec':'n/a');");
@@ -845,10 +996,24 @@ static String buildStatusBody() {
   body += F("<div class='card'><div class='key'>Reading Age</div><div class='value' id='mag-age'>");
   body += (magDiagnosticsActive() && lastMagReadingMs > 0) ? String((millis() - lastMagReadingMs) / 1000UL) + String(" sec") : String("n/a");
   body += F("</div></div></div>");
+  body += F("<div class='meta'>");
+  body += F("<div class='card'><div class='key'>Adaptive Thresholds</div><div class='value' id='adaptive-state'>");
+  body += settings.adaptiveThresholds ? F("On") : F("Off");
+  body += F("</div></div>");
+  body += F("<div class='card'><div class='key'>Adaptive Baseline</div><div class='value' id='adaptive-baseline'>");
+  body += isfinite(adaptiveBaseline) ? String(adaptiveBaseline, 2) : String("Learning");
+  body += F("</div></div>");
+  body += F("<div class='card'><div class='key'>Effective High</div><div class='value' id='effective-high'>");
+  body += String(activeMagHigh(), 2);
+  body += F("</div></div>");
+  body += F("<div class='card'><div class='key'>Effective Low</div><div class='value' id='effective-low'>");
+  body += String(activeMagLow(), 2);
+  body += F("</div></div></div>");
   body += F("<small>Enable this when tuning thresholds or investigating missed/false pulses. It shows live LIS3MDL magnetic readings in this browser and automatically turns off after 20 minutes.</small>");
   body += F("<div class='actions'>");
   body += F("<form method='post' action='/diagnostics/start'><button type='submit'>Show Magnetic Readings For 20 Minutes</button></form>");
   body += F("<form method='post' action='/diagnostics/stop'><button class='secondary' type='submit'>Turn Off Magnetic Readings</button></form>");
+  body += F("<form method='post' action='/adaptive/reset'><button class='secondary' type='submit'>Reset Adaptive Baseline</button></form>");
   body += F("<button class='secondary' type='button' onclick='clearMagLog()'>Clear Browser Log</button>");
   body += F("</div>");
   body += F("<pre class='log' id='mag-log'>Diagnostics log is empty.</pre>");
@@ -875,6 +1040,9 @@ static String buildStatusBody() {
   appendInputField(body, "Gallons Per Pulse", "gallons_per_pulse", String(settings.gallonsPerPulse, 5), "number", "0.0001", "How many gallons one meter pulse represents.");
   appendInputField(body, "Mag High Threshold", "mag_high", String(settings.magHigh, 2), "number", "0.1", "Magnetic magnitude must rise above this value to count a pulse.");
   appendInputField(body, "Mag Low Threshold", "mag_low", String(settings.magLow, 2), "number", "0.1", "Magnetic magnitude must fall below this value before the next pulse can arm.");
+  appendCheckboxField(body, "Enable Adaptive Thresholds", "adaptive_thresholds", settings.adaptiveThresholds != 0, "Automatically tracks slow idle magnetic drift and shifts the effective thresholds with it.");
+  appendInputField(body, "Adaptive High Delta", "adaptive_high_delta", String(settings.adaptiveHighDelta, 2), "number", "0.1", "How far above the learned idle baseline the magnetic magnitude must rise to count a pulse.");
+  appendInputField(body, "Adaptive Low Delta", "adaptive_low_delta", String(settings.adaptiveLowDelta, 2), "number", "0.1", "How close to the learned idle baseline the reading must fall before the next pulse can arm.");
   appendInputField(body, "Pulse Lockout (ms)", "pulse_lockout_ms", String(settings.pulseLockoutMs), "number", "1", "Minimum time between accepted pulses. Lower values allow higher max GPM, but too low can double-count noise.");
   appendInputField(body, "Sensor Poll (ms)", "sensor_poll_ms", String(settings.sensorPollMs), "number", "1", "How often the LIS3MDL is sampled. Lower is faster but uses more CPU.");
 
@@ -952,8 +1120,12 @@ static void applyPostedSettings() {
   settings.leakMinDurationMs = uintArgOr("leak_min_duration_ms", settings.leakMinDurationMs);
   settings.magDebugPublishMs = uintArgOr("mag_debug_publish_ms", settings.magDebugPublishMs);
   settings.enableRemoteReset = webServer.hasArg("enable_remote_reset") ? 1 : 0;
+  settings.adaptiveThresholds = webServer.hasArg("adaptive_thresholds") ? 1 : 0;
+  settings.adaptiveHighDelta = floatArgOr("adaptive_high_delta", settings.adaptiveHighDelta);
+  settings.adaptiveLowDelta = floatArgOr("adaptive_low_delta", settings.adaptiveLowDelta);
 
   sanitizeSettings(settings);
+  resetAdaptiveBaseline();
 }
 
 static void scheduleRestart() {
@@ -1010,6 +1182,15 @@ static void handleDiagnosticsStop() {
   body += F("<h1>Magnetic Diagnostics Off</h1><p>Live magnetic readings were turned off.</p>");
   body += F("<p><a href='/'>Return to the WebUI</a></p>");
   webServer.send(200, "text/html", renderPage("Magnetic Diagnostics Off", body));
+}
+
+static void handleAdaptiveReset() {
+  resetAdaptiveBaseline();
+
+  String body;
+  body += F("<h1>Adaptive Baseline Reset</h1><p>The adaptive threshold baseline will relearn from the next valid magnetic readings.</p>");
+  body += F("<p><a href='/'>Return to the WebUI</a></p>");
+  webServer.send(200, "text/html", renderPage("Adaptive Baseline Reset", body));
 }
 
 static void handleFirmwareUpdateUpload() {
@@ -1094,7 +1275,7 @@ static void handleFirmwareUpdatePost() {
 }
 
 static void handleStatusApi() {
-  StaticJsonDocument<896> doc;
+  StaticJsonDocument<1152> doc;
   bool magValid = isfinite(lastMagMagnitude) && lastMagMagnitude > settings.magMinValid && lastMagMagnitude < settings.magMaxValid;
 
   doc["device"] = settings.deviceName;
@@ -1118,6 +1299,10 @@ static void handleStatusApi() {
   doc["mag_valid"] = magValid;
   doc["mag_reading_ms"] = lastMagReadingMs;
   doc["mag_age_ms"] = lastMagReadingMs > 0 ? (uint32_t)(millis() - lastMagReadingMs) : 0UL;
+  doc["adaptive_thresholds"] = settings.adaptiveThresholds != 0;
+  doc["adaptive_baseline"] = isfinite(adaptiveBaseline) ? adaptiveBaseline : 0.0f;
+  doc["effective_mag_high"] = activeMagHigh();
+  doc["effective_mag_low"] = activeMagLow();
 
   String payload;
   serializeJson(doc, payload);
@@ -1147,6 +1332,7 @@ static void setupWebServer() {
   webServer.on("/reboot", HTTP_POST, handleReboot);
   webServer.on("/diagnostics/start", HTTP_POST, handleDiagnosticsStart);
   webServer.on("/diagnostics/stop", HTTP_POST, handleDiagnosticsStop);
+  webServer.on("/adaptive/reset", HTTP_POST, handleAdaptiveReset);
   webServer.on("/api/status", HTTP_GET, handleStatusApi);
   webServer.onNotFound(handleNotFound);
   webServer.begin();
@@ -1218,7 +1404,9 @@ void waterMeterLoop() {
       }
 
       if (isfinite(mag) && mag > settings.magMinValid && mag < settings.magMaxValid) {
-        if (!triggered && mag > settings.magHigh && (now - lastPulseAcceptedMs) > settings.pulseLockoutMs) {
+        updateEffectiveThresholds(mag, now);
+
+        if (!triggered && mag > activeMagHigh() && (now - lastPulseAcceptedMs) > settings.pulseLockoutMs) {
           pulseCount++;
           lastPulseMs = now;
           lastPulseAcceptedMs = now;
@@ -1228,7 +1416,7 @@ void waterMeterLoop() {
           Serial.printf("Pulse %lu |Mag|=%.2f\n", pulseCount, mag);
         }
 
-        if (triggered && mag < settings.magLow) {
+        if (triggered && mag < activeMagLow()) {
           triggered = false;
         }
       }
