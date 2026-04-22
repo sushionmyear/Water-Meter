@@ -59,6 +59,7 @@ From the Web UI you can:
 
 - change Wi-Fi settings
 - change MQTT broker settings
+- temporarily view live magnetic sensor readings for diagnostics
 - tune pulse detection thresholds
 - adjust gallons-per-pulse calibration
 - change publish and persistence intervals
@@ -176,6 +177,7 @@ These are the settings most users are likely to adjust:
 - `Pulse Lockout (ms)`: minimum spacing between pulses; lower values allow higher max flow
 - `Sensor Poll (ms)`: how often the LIS3MDL is sampled
 - `Flash Save Interval (ms)`: how often pulse count is saved to flash
+- `Magnetic Diagnostics`: shows live X/Y/Z and magnitude readings in the Web UI for 20 minutes, then automatically turns off
 - `Leak Minimum Flow (gpm)`: minimum sustained flow before leak timing starts
 - `Leak Minimum Duration (ms)`: how long flow must persist before leak state turns on
 
@@ -222,6 +224,7 @@ If `Enable MQTT RESET command` is turned on, publishing `RESET` to `<base_topic>
 
 ### False counts or noisy readings
 
+- Turn on `Magnetic Diagnostics` in the Web UI and watch the live magnitude while the meter is idle and while water is flowing.
 - Raise `Mag High Threshold`.
 - Lower `Mag Low Threshold` only if the sensor is failing to re-arm.
 - Set `Mag Debug Publish (ms)` to a small value temporarily so you can inspect the live magnetic value over MQTT.

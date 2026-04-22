@@ -56,6 +56,7 @@ static const uint32_t WIFI_RETRY_MS = 10000UL;
 static const uint32_t WIFI_SETUP_AP_DELAY_MS = 30000UL;
 static const uint32_t MQTT_RETRY_MS = 10000UL;
 static const uint32_t RESTART_DELAY_MS = 1500UL;
+static const uint32_t MAG_DIAGNOSTICS_DURATION_MS = 20UL * 60UL * 1000UL;
 static const IPAddress SETUP_AP_IP(192, 168, 4, 1);
 static const IPAddress SETUP_AP_GATEWAY(192, 168, 4, 1);
 static const IPAddress SETUP_AP_SUBNET(255, 255, 255, 0);
@@ -119,8 +120,14 @@ static unsigned long lastFlowCalcMs = 0;
 static unsigned long pulseCountAtLastFlowCalc = 0;
 static unsigned long leakStartMs = 0;
 static unsigned long lastMagDebugPublishMs = 0;
+static unsigned long lastMagReadingMs = 0;
+static unsigned long magDiagnosticsUntilMs = 0;
 static unsigned long restartScheduledMs = 0;
 static float flowGpmSmoothed = 0.0f;
+static float lastMagX = NAN;
+static float lastMagY = NAN;
+static float lastMagZ = NAN;
+static float lastMagMagnitude = NAN;
 static bool discoveryPublished = false;
 static bool leakActive = false;
 static bool leakStatePublished = false;
@@ -286,6 +293,19 @@ static String htmlEscape(const char* input) {
 
 static float totalGallonsValue() {
   return (float)pulseCount * settings.gallonsPerPulse;
+}
+
+static bool magDiagnosticsActive() {
+  if (magDiagnosticsUntilMs == 0) return false;
+  if ((int32_t)(magDiagnosticsUntilMs - millis()) <= 0) {
+    magDiagnosticsUntilMs = 0;
+    return false;
+  }
+  return true;
+}
+
+static uint32_t magDiagnosticsRemainingMs() {
+  return magDiagnosticsActive() ? (uint32_t)(magDiagnosticsUntilMs - millis()) : 0UL;
 }
 
 static String firmwareUpdateErrorString() {
@@ -704,7 +724,7 @@ static void appendCheckboxField(String& body, const char* label, const char* nam
 
 static String renderPage(const String& title, const String& body) {
   String page;
-  page.reserve(body.length() + 2200);
+  page.reserve(body.length() + 3600);
   page += F("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>");
   page += F("<title>");
   page += htmlEscape(title);
@@ -722,7 +742,17 @@ static String renderPage(const String& title, const String& body) {
   page += F(".secondary{background:#415a77;}.danger{background:#b42318;}a{color:#0f6cbd;text-decoration:none;}");
   page += F("</style></head><body><div class='shell'>");
   page += body;
-  page += F("</div></body></html>");
+  page += F("</div><script>");
+  page += F("function setText(id,v){var e=document.getElementById(id);if(e)e.textContent=v;}");
+  page += F("function fixed(v,n){return typeof v==='number'&&isFinite(v)?v.toFixed(n):'n/a';}");
+  page += F("async function refreshStatus(){try{var r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)return;var s=await r.json();");
+  page += F("setText('diag-state',s.mag_diagnostics_active?'On':'Off');");
+  page += F("setText('diag-remaining',s.mag_diagnostics_active?Math.ceil((s.mag_diagnostics_remaining_ms||0)/60000)+' min':'0 min');");
+  page += F("if(!s.mag_diagnostics_active){setText('mag-magnitude','n/a');setText('mag-x','n/a');setText('mag-y','n/a');setText('mag-z','n/a');setText('mag-valid','Off');setText('mag-age','n/a');return;}");
+  page += F("setText('mag-magnitude',fixed(s.mag_magnitude,2));setText('mag-x',fixed(s.mag_x,2));setText('mag-y',fixed(s.mag_y,2));setText('mag-z',fixed(s.mag_z,2));");
+  page += F("setText('mag-valid',s.mag_valid?'Yes':'No');setText('mag-age',typeof s.mag_age_ms==='number'?Math.round(s.mag_age_ms/1000)+' sec':'n/a');");
+  page += F("}catch(e){}}setInterval(refreshStatus,2000);refreshStatus();");
+  page += F("</script></body></html>");
   return page;
 }
 
@@ -784,6 +814,36 @@ static String buildStatusBody() {
   body += F("<div class='card'><div class='key'>Flow</div><div class='value'>");
   body += String(flowGpmSmoothed, 3);
   body += F(" gpm</div></div></div>");
+
+  body += F("<h2>Magnetic Diagnostics</h2>");
+  body += F("<div class='meta'>");
+  body += F("<div class='card'><div class='key'>Diagnostics</div><div class='value' id='diag-state'>");
+  body += magDiagnosticsActive() ? F("On") : F("Off");
+  body += F("</div></div>");
+  body += F("<div class='card'><div class='key'>Auto-Off In</div><div class='value' id='diag-remaining'>");
+  body += String((magDiagnosticsRemainingMs() + 59999UL) / 60000UL);
+  body += F(" min</div></div>");
+  body += F("<div class='card'><div class='key'>Magnitude</div><div class='value' id='mag-magnitude'>");
+  body += (magDiagnosticsActive() && isfinite(lastMagMagnitude)) ? String(lastMagMagnitude, 2) : String("n/a");
+  body += F("</div></div>");
+  body += F("<div class='card'><div class='key'>X / Y / Z</div><div class='value'><span id='mag-x'>");
+  body += (magDiagnosticsActive() && isfinite(lastMagX)) ? String(lastMagX, 2) : String("n/a");
+  body += F("</span> / <span id='mag-y'>");
+  body += (magDiagnosticsActive() && isfinite(lastMagY)) ? String(lastMagY, 2) : String("n/a");
+  body += F("</span> / <span id='mag-z'>");
+  body += (magDiagnosticsActive() && isfinite(lastMagZ)) ? String(lastMagZ, 2) : String("n/a");
+  body += F("</span></div></div>");
+  body += F("<div class='card'><div class='key'>Within Bounds</div><div class='value' id='mag-valid'>");
+  body += magDiagnosticsActive() ? ((isfinite(lastMagMagnitude) && lastMagMagnitude > settings.magMinValid && lastMagMagnitude < settings.magMaxValid) ? F("Yes") : F("No")) : F("Off");
+  body += F("</div></div>");
+  body += F("<div class='card'><div class='key'>Reading Age</div><div class='value' id='mag-age'>");
+  body += (magDiagnosticsActive() && lastMagReadingMs > 0) ? String((millis() - lastMagReadingMs) / 1000UL) + String(" sec") : String("n/a");
+  body += F("</div></div></div>");
+  body += F("<small>Enable this when tuning thresholds or investigating missed/false pulses. It shows live LIS3MDL magnetic readings in this browser and automatically turns off after 20 minutes.</small>");
+  body += F("<div class='actions'>");
+  body += F("<form method='post' action='/diagnostics/start'><button type='submit'>Show Magnetic Readings For 20 Minutes</button></form>");
+  body += F("<form method='post' action='/diagnostics/stop'><button class='secondary' type='submit'>Turn Off Magnetic Readings</button></form>");
+  body += F("</div>");
 
   body += F("<form method='post' action='/save'>");
 
@@ -926,6 +986,24 @@ static void handleReboot() {
   scheduleRestart();
 }
 
+static void handleDiagnosticsStart() {
+  magDiagnosticsUntilMs = millis() + MAG_DIAGNOSTICS_DURATION_MS;
+
+  String body;
+  body += F("<h1>Magnetic Diagnostics Enabled</h1><p>Live magnetic readings will be shown for 20 minutes, then turn off automatically.</p>");
+  body += F("<p><a href='/'>Return to the WebUI</a></p>");
+  webServer.send(200, "text/html", renderPage("Magnetic Diagnostics Enabled", body));
+}
+
+static void handleDiagnosticsStop() {
+  magDiagnosticsUntilMs = 0;
+
+  String body;
+  body += F("<h1>Magnetic Diagnostics Off</h1><p>Live magnetic readings were turned off.</p>");
+  body += F("<p><a href='/'>Return to the WebUI</a></p>");
+  webServer.send(200, "text/html", renderPage("Magnetic Diagnostics Off", body));
+}
+
 static void handleFirmwareUpdateUpload() {
   HTTPUpload& upload = webServer.upload();
 
@@ -1008,7 +1086,9 @@ static void handleFirmwareUpdatePost() {
 }
 
 static void handleStatusApi() {
-  StaticJsonDocument<640> doc;
+  StaticJsonDocument<896> doc;
+  bool magValid = isfinite(lastMagMagnitude) && lastMagMagnitude > settings.magMinValid && lastMagMagnitude < settings.magMaxValid;
+
   doc["device"] = settings.deviceName;
   doc["platform"] = PLATFORM_NAME;
   doc["ip"] = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : "disconnected";
@@ -1021,6 +1101,14 @@ static void handleStatusApi() {
   doc["pulse_count"] = pulseCount;
   doc["total_gallons"] = totalGallonsValue();
   doc["flow_gpm"] = flowGpmSmoothed;
+  doc["mag_diagnostics_active"] = magDiagnosticsActive();
+  doc["mag_diagnostics_remaining_ms"] = magDiagnosticsRemainingMs();
+  doc["mag_x"] = isfinite(lastMagX) ? lastMagX : 0.0f;
+  doc["mag_y"] = isfinite(lastMagY) ? lastMagY : 0.0f;
+  doc["mag_z"] = isfinite(lastMagZ) ? lastMagZ : 0.0f;
+  doc["mag_magnitude"] = isfinite(lastMagMagnitude) ? lastMagMagnitude : 0.0f;
+  doc["mag_valid"] = magValid;
+  doc["mag_age_ms"] = lastMagReadingMs > 0 ? (uint32_t)(millis() - lastMagReadingMs) : 0UL;
 
   String payload;
   serializeJson(doc, payload);
@@ -1048,6 +1136,8 @@ static void setupWebServer() {
   webServer.on("/update", HTTP_POST, handleFirmwareUpdatePost, handleFirmwareUpdateUpload);
   webServer.on("/reset-counter", HTTP_POST, handleResetCounter);
   webServer.on("/reboot", HTTP_POST, handleReboot);
+  webServer.on("/diagnostics/start", HTTP_POST, handleDiagnosticsStart);
+  webServer.on("/diagnostics/stop", HTTP_POST, handleDiagnosticsStop);
   webServer.on("/api/status", HTTP_GET, handleStatusApi);
   webServer.onNotFound(handleNotFound);
   webServer.begin();
@@ -1095,6 +1185,7 @@ void waterMeterLoop() {
   webServer.handleClient();
 
   unsigned long now = millis();
+  magDiagnosticsActive();
 
   if (sensorAvailable && (now - lastSensorPollMs >= settings.sensorPollMs)) {
     lastSensorPollMs = now;
@@ -1106,6 +1197,11 @@ void waterMeterLoop() {
         event.magnetic.y * event.magnetic.y +
         event.magnetic.z * event.magnetic.z
       );
+      lastMagX = event.magnetic.x;
+      lastMagY = event.magnetic.y;
+      lastMagZ = event.magnetic.z;
+      lastMagMagnitude = mag;
+      lastMagReadingMs = now;
 
       if (settings.magDebugPublishMs > 0 && (now - lastMagDebugPublishMs) >= settings.magDebugPublishMs) {
         lastMagDebugPublishMs = now;
